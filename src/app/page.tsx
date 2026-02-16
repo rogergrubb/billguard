@@ -1,189 +1,99 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import Hero from './components/Hero'
-import BillUpload from './components/Upload'
-import Results, { AnalysisResult } from './components/Results'
-import { Shield, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import {
+  Shield, Upload, Search, Plus, FileText, X, Camera, FileImage,
+  ArrowRight, Zap, ChevronDown, AlertTriangle,
+} from 'lucide-react'
+import { DocumentAnalysis } from './lib/types'
+import { getLibrary, saveDocument, deleteDocument, searchDocuments, generateId } from './lib/storage'
+import DocumentCard from './components/DocumentCard'
+import DocumentDetail from './components/DocumentDetail'
 
-type View = 'landing' | 'analyzing' | 'results' | 'error'
+type View = 'dashboard' | 'uploading' | 'analyzing' | 'detail' | 'error'
 
-const DEMO_RESULT: AnalysisResult = {
-  provider: 'Mercy General Hospital',
-  dateOfService: 'January 12, 2026',
-  billType: 'Emergency Room Visit',
-  lineItems: [
-    {
-      code: '99285',
-      description: 'ER Visit - Level 5 (Highest Complexity)',
-      billedAmount: 4850.0,
-      status: 'overcharge',
-      issue:
-        'Level 5 ER code billed for a presentation consistent with Level 3 (moderate complexity). Common upcoding pattern — Level 5 requires high-severity conditions with immediate threat to life.',
-      fairPrice: 1200.0,
-      savings: 3650.0,
-      severity: 'high',
-      regulation: 'CMS Correct Coding Initiative (NCCI) — CPT evaluation guidelines',
-    },
-    {
-      code: '36415',
-      description: 'Venipuncture (Blood Draw)',
-      billedAmount: 175.0,
-      status: 'overcharge',
-      issue: 'Blood draw billed at 5.8x the Medicare rate of $30. Excessive facility markup.',
-      fairPrice: 30.0,
-      savings: 145.0,
-      severity: 'medium',
-      regulation: 'Hospital Price Transparency Rule (45 CFR Part 180)',
-    },
-    {
-      code: '85025',
-      description: 'Complete Blood Count (CBC)',
-      billedAmount: 350.0,
-      status: 'overcharge',
-      issue: 'Standard CBC lab test billed at 9x the Medicare rate. National average is $35-50.',
-      fairPrice: 40.0,
-      savings: 310.0,
-      severity: 'high',
-      regulation: 'Hospital Price Transparency Rule (45 CFR Part 180)',
-    },
-    {
-      code: '71046',
-      description: 'Chest X-Ray, 2 Views',
-      billedAmount: 890.0,
-      status: 'overcharge',
-      issue: 'Chest X-ray billed at 12x the Medicare allowable amount of ~$75.',
-      fairPrice: 75.0,
-      savings: 815.0,
-      severity: 'high',
-      regulation: 'Medicare Fee Schedule — Physician Fee Schedule Lookup Tool',
-    },
-    {
-      code: '96374',
-      description: 'IV Push, Single Drug',
-      billedAmount: 425.0,
-      status: 'suspicious',
-      issue: 'IV push administration fee significantly above Medicare rate of $55. Verify drug was actually administered.',
-      fairPrice: 55.0,
-      savings: 370.0,
-      severity: 'medium',
-      regulation: 'False Claims Act (31 USC §3729)',
-    },
-    {
-      code: 'J7030',
-      description: 'Normal Saline 1000ml',
-      billedAmount: 137.0,
-      status: 'overcharge',
-      issue: 'Saline bag costs $1-3 wholesale. Hospital charging 45x+ markup.',
-      fairPrice: 5.0,
-      savings: 132.0,
-      severity: 'medium',
-      regulation: 'Hospital Price Transparency Rule (45 CFR Part 180)',
-    },
-    {
-      code: '99051',
-      description: 'Service Provided in Office During Regular Hours',
-      billedAmount: 250.0,
-      status: 'duplicate',
-      issue: 'This modifier code is already included in the ER visit facility fee. Double-charging for the same service.',
-      fairPrice: 0.0,
-      savings: 250.0,
-      severity: 'high',
-      regulation: 'CMS Correct Coding Initiative (NCCI) — Bundling rules',
-    },
-    {
-      code: '80053',
-      description: 'Comprehensive Metabolic Panel',
-      billedAmount: 415.0,
-      status: 'ok',
-      issue: null,
-      fairPrice: 415.0,
-      savings: 0.0,
-      severity: 'low',
-      regulation: '',
-    },
-  ],
-  totalBilled: 7492.0,
-  totalFairPrice: 1820.0,
-  totalSavings: 5672.0,
-  summary:
-    'This emergency room bill contains 7 flagged charges with a total of $5,672 in potential overcharges — 75.7% of the total bill. The most significant issue is upcoding the ER visit from what appears to be a Level 3 to a Level 5, adding $3,650 in excess charges. Multiple line items show markups ranging from 5x to 45x the Medicare rate.',
-  overchargeCount: 7,
-  confidence: 'high',
-}
+const ANALYZE_STEPS = [
+  'Reading your document...',
+  'Classifying document type...',
+  'Extracting metadata and entities...',
+  'Identifying key dates and amounts...',
+  'Scanning for risks and concerns...',
+  'Cross-referencing regulations...',
+  'Building your analysis report...',
+]
+
+const CATEGORY_FILTERS = [
+  { value: 'all', label: 'All Documents' },
+  { value: 'medical_bill', label: 'Medical Bills' },
+  { value: 'legal_contract', label: 'Legal Contracts' },
+  { value: 'legal_notice', label: 'Legal Notices' },
+  { value: 'insurance_eob', label: 'Insurance EOB' },
+  { value: 'tax_document', label: 'Tax Documents' },
+  { value: 'financial_statement', label: 'Financial' },
+  { value: 'invoice', label: 'Invoices' },
+  { value: 'receipt', label: 'Receipts' },
+  { value: 'employment', label: 'Employment' },
+  { value: 'real_estate', label: 'Real Estate' },
+  { value: 'government_form', label: 'Government' },
+]
 
 export default function Home() {
-  const [view, setView] = useState<View>('landing')
-  const [result, setResult] = useState<AnalysisResult | null>(null)
+  const [view, setView] = useState<View>('dashboard')
+  const [documents, setDocuments] = useState<DocumentAnalysis[]>([])
+  const [selectedDoc, setSelectedDoc] = useState<DocumentAnalysis | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const [errorMessage, setErrorMessage] = useState('')
-  const [isUploading, setIsUploading] = useState(false)
-  const [showUpload, setShowUpload] = useState(false)
   const [analyzeStep, setAnalyzeStep] = useState(0)
+  const [dragOver, setDragOver] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  const ANALYZE_STEPS = [
-    'Reading your bill...',
-    'Identifying CPT codes and charges...',
-    'Checking against Medicare rates...',
-    'Scanning for billing violations...',
-    'Checking No Surprises Act compliance...',
-    'Calculating fair market prices...',
-    'Generating your report...',
-  ]
-
-  const handleUploadClick = useCallback(() => {
-    setShowUpload(true)
-    setTimeout(() => {
-      document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth' })
-    }, 100)
+  // Load documents on mount
+  useEffect(() => {
+    const lib = getLibrary()
+    setDocuments(lib.documents)
   }, [])
 
-  const handleDemo = useCallback(() => {
-    setView('analyzing')
-    setAnalyzeStep(0)
+  // Filter documents
+  const filteredDocs = searchQuery
+    ? searchDocuments(searchQuery)
+    : categoryFilter !== 'all'
+    ? documents.filter((d) => d.category === categoryFilter)
+    : documents
 
-    // Simulate analysis steps
-    const steps = ANALYZE_STEPS.length
-    for (let i = 0; i < steps; i++) {
-      setTimeout(() => setAnalyzeStep(i), i * 600)
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      alert('Please upload an image (JPG, PNG) or PDF.')
+      return
     }
-    setTimeout(() => {
-      setResult(DEMO_RESULT)
-      setView('results')
-    }, steps * 600 + 400)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
-  const handleFileSelected = useCallback(async (file: File) => {
-    setIsUploading(true)
+    setShowUploadModal(false)
     setView('analyzing')
     setAnalyzeStep(0)
 
-    // Step through analysis phases
     const stepInterval = setInterval(() => {
       setAnalyzeStep((prev) => (prev < ANALYZE_STEPS.length - 1 ? prev + 1 : prev))
-    }, 3000)
+    }, 2500)
 
     try {
-      // Convert file to base64
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
-        reader.onload = () => {
-          const result = reader.result as string
-          // Strip data URL prefix
-          const base64Data = result.split(',')[1]
-          resolve(base64Data)
-        }
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
         reader.onerror = reject
         reader.readAsDataURL(file)
       })
 
+      // Create thumbnail for images
+      let thumbnailData: string | undefined
+      if (file.type.startsWith('image/')) {
+        thumbnailData = await createThumbnail(file)
+      }
+
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image: base64,
-          mimeType: file.type || 'image/jpeg',
-        }),
+        body: JSON.stringify({ image: base64, mimeType: file.type || 'image/jpeg' }),
       })
 
       clearInterval(stepInterval)
@@ -192,83 +102,71 @@ export default function Home() {
       if (data.error) {
         setErrorMessage(data.error)
         setView('error')
-      } else {
-        setResult(data)
-        setView('results')
+        return
       }
+
+      // Build full document analysis
+      const doc: DocumentAnalysis = {
+        id: generateId(),
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        uploadedAt: new Date().toISOString(),
+        analyzedAt: new Date().toISOString(),
+        thumbnailData,
+        ...data,
+      }
+
+      // Save to library
+      saveDocument(doc)
+      setDocuments(getLibrary().documents)
+      setSelectedDoc(doc)
+      setView('detail')
     } catch {
       clearInterval(stepInterval)
-      setErrorMessage('Failed to analyze your bill. Please try again.')
+      setErrorMessage('Failed to analyze your document. Please try again.')
       setView('error')
     }
+  }, [])
 
-    setIsUploading(false)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      setDragOver(false)
+      const file = e.dataTransfer.files[0]
+      if (file) handleFile(file)
+    },
+    [handleFile]
+  )
+
+  const handleDelete = useCallback((id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (confirm('Delete this document analysis?')) {
+      deleteDocument(id)
+      setDocuments(getLibrary().documents)
+    }
   }, [])
 
   // Analyzing View
   if (view === 'analyzing') {
     return (
-      <div
-        style={{
-          minHeight: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-        }}
-      >
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <div style={{ textAlign: 'center', maxWidth: 400 }}>
-          <div
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: 16,
-              background: 'var(--accent-glow)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 24px',
-            }}
-          >
+          <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--accent-glow)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
             <Shield size={32} color="var(--accent)" />
           </div>
-          <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Auditing Your Bill</h2>
-
+          <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>Analyzing Document</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, textAlign: 'left' }}>
             {ANALYZE_STEPS.map((step, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  background: i === analyzeStep ? 'var(--accent-glow)' : 'transparent',
-                  transition: 'all 0.3s ease',
-                  opacity: i <= analyzeStep ? 1 : 0.3,
-                }}
-              >
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', borderRadius: 8, background: i === analyzeStep ? 'var(--accent-glow)' : 'transparent', transition: 'all 0.3s ease', opacity: i <= analyzeStep ? 1 : 0.3 }}>
                 {i < analyzeStep ? (
-                  <div style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                      <path d="M3 8.5L6.5 12L13 4" stroke="var(--success)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
+                  <svg width="20" height="20" viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.5 12L13 4" stroke="var(--success)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 ) : i === analyzeStep ? (
                   <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
                 ) : (
                   <div style={{ width: 20, height: 20, borderRadius: '50%', border: '2px solid var(--border)' }} />
                 )}
-                <span
-                  style={{
-                    fontSize: 14,
-                    color: i === analyzeStep ? 'var(--text)' : i < analyzeStep ? 'var(--success)' : 'var(--text-dim)',
-                    fontWeight: i === analyzeStep ? 500 : 400,
-                  }}
-                >
+                <span style={{ fontSize: 14, color: i === analyzeStep ? 'var(--text)' : i < analyzeStep ? 'var(--success)' : 'var(--text-dim)', fontWeight: i === analyzeStep ? 500 : 400 }}>
                   {step}
                 </span>
               </div>
@@ -282,151 +180,236 @@ export default function Home() {
   // Error View
   if (view === 'error') {
     return (
-      <div
-        style={{
-          minHeight: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 24,
-        }}
-      >
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <div className="glass-card" style={{ padding: 40, textAlign: 'center', maxWidth: 480 }}>
           <AlertTriangle size={40} color="var(--danger)" style={{ margin: '0 auto 16px' }} />
           <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Analysis Failed</h2>
           <p style={{ color: 'var(--text-muted)', marginBottom: 24 }}>{errorMessage}</p>
-          <button
-            className="btn-primary"
-            onClick={() => {
-              setView('landing')
-              setShowUpload(false)
-            }}
-          >
-            Try Again
-          </button>
+          <button className="btn-primary" onClick={() => setView('dashboard')}>Back to Dashboard</button>
         </div>
       </div>
     )
   }
 
-  // Results View
-  if (view === 'results' && result) {
+  // Detail View
+  if (view === 'detail' && selectedDoc) {
     return (
-      <Results
-        result={result}
-        onBack={() => {
-          setView('landing')
-          setShowUpload(false)
-          setResult(null)
-        }}
+      <DocumentDetail
+        doc={selectedDoc}
+        onBack={() => { setView('dashboard'); setSelectedDoc(null) }}
       />
     )
   }
 
-  // Landing View
+  // Dashboard View
+  const hasDocuments = documents.length > 0
+
   return (
-    <main style={{ minHeight: '100vh' }}>
-      {/* Nav */}
-      <nav
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '16px 24px',
-          maxWidth: 1100,
-          margin: '0 auto',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Shield size={22} color="var(--accent)" />
-          <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 20 }}>
-            BillGuard
-          </span>
+    <main
+      style={{ minHeight: '100vh' }}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={handleDrop}
+    >
+      {/* Global drag overlay */}
+      {dragOver && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 100,
+          background: 'rgba(11,15,26,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          border: '3px dashed var(--accent)',
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <Upload size={56} color="var(--accent)" style={{ margin: '0 auto 16px' }} />
+            <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Drop your document here</h2>
+            <p style={{ color: 'var(--text-muted)' }}>JPG, PNG, or PDF — we&apos;ll analyze it instantly</p>
+          </div>
         </div>
-        <button className="btn-primary" onClick={handleUploadClick} style={{ padding: '10px 20px', fontSize: 14 }}>
-          Scan My Bill
+      )}
+
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+          onClick={() => setShowUploadModal(false)}>
+          <div className="glass-card" style={{ padding: 32, maxWidth: 480, width: '100%' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h2 style={{ fontSize: 20, fontWeight: 700 }}>Upload Document</h2>
+              <button onClick={() => setShowUploadModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', padding: 4 }}>
+                <X size={20} />
+              </button>
+            </div>
+            <div
+              className="upload-zone"
+              onClick={() => inputRef.current?.click()}
+              style={{ marginBottom: 16 }}
+            >
+              <input ref={inputRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+              <Upload size={36} color="var(--text-dim)" style={{ margin: '0 auto 12px' }} />
+              <p style={{ fontWeight: 500, marginBottom: 4 }}>Click to browse or drag here</p>
+              <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>Medical bills, contracts, tax docs, legal notices — any document</p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
+                <span className="badge badge-info"><Camera size={11} /> Photo</span>
+                <span className="badge badge-info"><FileImage size={11} /> Scan</span>
+                <span className="badge badge-info"><FileText size={11} /> PDF</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Nav */}
+      <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 24px', maxWidth: 1100, margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => { setView('dashboard'); setSelectedDoc(null) }}>
+          <Shield size={22} color="var(--accent)" />
+          <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 20 }}>BillGuard</span>
+          {hasDocuments && (
+            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'var(--accent-glow)', color: 'var(--accent)', fontWeight: 600, marginLeft: 4 }}>
+              {documents.length} docs
+            </span>
+          )}
+        </div>
+        <button className="btn-primary" onClick={() => setShowUploadModal(true)} style={{ padding: '8px 18px', fontSize: 13 }}>
+          <Plus size={16} /> Analyze Document
         </button>
       </nav>
 
-      <Hero onUploadClick={handleUploadClick} onDemoClick={handleDemo} />
-
-      {showUpload && <BillUpload onFileSelected={handleFileSelected} isUploading={isUploading} />}
-
-      {/* Social Proof */}
-      <section style={{ padding: '60px 24px', maxWidth: 800, margin: '0 auto' }}>
-        <div
-          className="glass-card"
-          style={{
-            padding: '40px 32px',
-            textAlign: 'center',
-            background: 'linear-gradient(135deg, rgba(239,68,68,0.04) 0%, rgba(245,158,11,0.04) 100%)',
-          }}
-        >
-          <h2 style={{ fontSize: 28, fontWeight: 900, marginBottom: 12 }}>
-            <span style={{ color: 'var(--danger)' }}>80%</span> of medical bills contain errors.
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: 16, lineHeight: 1.6, maxWidth: 540, margin: '0 auto' }}>
-            The average American family overpays $1,300 per year on medical bills.
-            BillGuard catches what you can&apos;t see — upcoding, duplicate charges,
-            balance billing violations, and markups that violate federal transparency rules.
-          </p>
-        </div>
-      </section>
-
-      {/* How It Works */}
-      <section style={{ padding: '20px 24px 80px', maxWidth: 800, margin: '0 auto' }}>
-        <h2 style={{ fontSize: 26, fontWeight: 900, textAlign: 'center', marginBottom: 40 }}>
-          How It Works
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
-          {[
-            {
-              step: '01',
-              title: 'Upload Your Bill',
-              desc: 'Snap a photo or upload a scan of your medical bill or EOB.',
-            },
-            {
-              step: '02',
-              title: 'AI Audits Every Line',
-              desc: 'Our system checks each charge against Medicare rates, coding rules, and federal regulations.',
-            },
-            {
-              step: '03',
-              title: 'Get Your Dispute Letter',
-              desc: 'If overcharges are found, we generate a regulation-citing dispute letter ready to send.',
-            },
-          ].map((item) => (
-            <div key={item.step} className="glass-card" style={{ padding: 24 }}>
-              <div
-                style={{
-                  fontFamily: "'Fraunces', serif",
-                  fontSize: 36,
-                  fontWeight: 900,
-                  color: 'var(--accent)',
-                  opacity: 0.3,
-                  marginBottom: 8,
-                }}
-              >
-                {item.step}
-              </div>
-              <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>
-                {item.title}
-              </h3>
-              <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                {item.desc}
-              </p>
+      {/* Main Content */}
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px 80px' }}>
+        {!hasDocuments ? (
+          /* Empty state / Landing */
+          <div style={{ textAlign: 'center', padding: '60px 0 40px' }}>
+            <div className="animate-in" style={{ marginBottom: 16 }}>
+              <span className="badge badge-warning" style={{ fontSize: 13, padding: '6px 14px' }}>
+                <Zap size={14} /> AI-Powered Document Intelligence
+              </span>
             </div>
-          ))}
-        </div>
-      </section>
+            <h1 className="animate-in stagger-1" style={{ fontSize: 'clamp(2rem, 5vw, 3.2rem)', fontWeight: 900, lineHeight: 1.1, marginBottom: 16 }}>
+              Upload any document.
+              <br /><span style={{ color: 'var(--accent)' }}>Get instant intelligence.</span>
+            </h1>
+            <p className="animate-in stagger-2" style={{ fontSize: 17, color: 'var(--text-muted)', maxWidth: 520, margin: '0 auto 32px', lineHeight: 1.6 }}>
+              Medical bills, legal contracts, tax documents, insurance forms — our AI reads everything, extracts every detail, flags every risk, and generates exportable reports.
+            </p>
+
+            <div className="animate-in stagger-3" style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 48 }}>
+              <button className="btn-primary" onClick={() => setShowUploadModal(true)}>
+                <Shield size={18} /> Analyze a Document <ArrowRight size={16} />
+              </button>
+            </div>
+
+            {/* Feature grid */}
+            <div className="animate-in stagger-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16, maxWidth: 800, margin: '0 auto' }}>
+              {[
+                { title: 'Any Document Type', desc: 'Medical bills, contracts, tax forms, insurance EOBs, legal notices, invoices, and more.' },
+                { title: 'Deep Metadata Extraction', desc: 'Every name, date, amount, code, and reference number — automatically tagged and searchable.' },
+                { title: 'Risk & Compliance Flags', desc: 'AI identifies overcharges, hidden clauses, missed deadlines, and regulatory violations.' },
+                { title: 'Export & Print', desc: 'Generate professional PDF reports with full analysis, ready to share or file.' },
+              ].map((f) => (
+                <div key={f.title} className="glass-card" style={{ padding: 20, textAlign: 'left' }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>{f.title}</h3>
+                  <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>{f.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          /* Document Library */
+          <div style={{ paddingTop: 24 }}>
+            {/* Search + Filter Bar */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
+                <Search size={16} color="var(--text-dim)" style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  type="text"
+                  placeholder="Search documents, tags, entities..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    width: '100%', padding: '12px 14px 12px 40px', borderRadius: 10,
+                    border: '1px solid var(--border)', background: 'var(--bg-card)',
+                    color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', outline: 'none',
+                  }}
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}>
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              <div style={{ position: 'relative' }}>
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  style={{
+                    padding: '12px 36px 12px 14px', borderRadius: 10,
+                    border: '1px solid var(--border)', background: 'var(--bg-card)',
+                    color: 'var(--text)', fontSize: 14, fontFamily: 'inherit',
+                    appearance: 'none', cursor: 'pointer', outline: 'none',
+                  }}
+                >
+                  {CATEGORY_FILTERS.map((f) => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} color="var(--text-dim)" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+              </div>
+            </div>
+
+            {/* Results count */}
+            <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
+              {filteredDocs.length} document{filteredDocs.length !== 1 ? 's' : ''}
+              {searchQuery && ` matching "${searchQuery}"`}
+              {categoryFilter !== 'all' && ` in ${CATEGORY_FILTERS.find((f) => f.value === categoryFilter)?.label}`}
+            </p>
+
+            {/* Document Grid */}
+            {filteredDocs.length > 0 ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+                {filteredDocs.map((doc) => (
+                  <DocumentCard
+                    key={doc.id}
+                    doc={doc}
+                    onClick={() => { setSelectedDoc(doc); setView('detail') }}
+                    onDelete={(e) => handleDelete(doc.id, e)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                <FileText size={40} color="var(--text-dim)" style={{ margin: '0 auto 12px' }} />
+                <p style={{ color: 'var(--text-dim)' }}>No documents match your search.</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Footer */}
-      <footer style={{ padding: '24px', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
+      <footer style={{ padding: 24, textAlign: 'center', borderTop: '1px solid var(--border)' }}>
         <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-          © {new Date().getFullYear()} NumberOneSonSoftware. BillGuard is not a substitute for legal advice.
+          © {new Date().getFullYear()} NumberOneSonSoftware. AI-powered document intelligence. Not a substitute for professional advice.
         </p>
       </footer>
     </main>
   )
+}
+
+async function createThumbnail(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      const size = 120
+      canvas.width = size
+      canvas.height = size
+      const ctx = canvas.getContext('2d')!
+      const scale = Math.max(size / img.width, size / img.height)
+      const w = img.width * scale
+      const h = img.height * scale
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h)
+      resolve(canvas.toDataURL('image/jpeg', 0.6))
+    }
+    img.onerror = () => resolve('')
+    img.src = URL.createObjectURL(file)
+  })
 }

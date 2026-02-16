@@ -2,62 +2,102 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const maxDuration = 60
 
-const ANALYSIS_PROMPT = `You are a medical billing auditor AI. Analyze this medical bill image thoroughly.
+const UNIVERSAL_ANALYSIS_PROMPT = `You are an expert document analyst with deep expertise across legal, medical, financial, insurance, tax, real estate, employment, and government documents. Analyze the uploaded document image with extreme precision and thoroughness.
 
-INSTRUCTIONS:
-1. Read every line item, CPT/HCPCS code, revenue code, description, and charge amount
-2. Identify the bill type (ER visit, surgery, hospital stay, lab work, imaging, etc.)
-3. Identify the provider name, patient info if visible, and date of service
-4. For each line item, determine if the charge appears reasonable or potentially problematic
+STEP 1 — CLASSIFY THE DOCUMENT
+Determine the document category:
+- medical_bill: Hospital bills, physician bills, lab bills, pharmacy bills
+- legal_contract: Contracts, agreements, terms of service, NDAs, leases
+- legal_notice: Court notices, demand letters, cease & desist, summons, legal filings
+- insurance_eob: Explanation of Benefits, insurance claims, coverage letters
+- tax_document: W-2, 1099, tax returns, property tax bills, IRS notices
+- financial_statement: Bank statements, investment reports, credit reports, loan docs
+- invoice: Business invoices, service bills, utility bills
+- receipt: Purchase receipts, transaction records
+- government_form: Government applications, permits, licenses, registrations
+- real_estate: Deeds, title docs, closing statements, property records, HOA docs
+- employment: Offer letters, pay stubs, employment contracts, termination letters, benefits enrollment
+- correspondence: General letters, notices, memos
+- other: Anything that doesn't fit above
 
-CHECK FOR THESE SPECIFIC ISSUES:
-- **Upcoding**: Service billed at higher complexity than warranted (e.g., Level 5 ER visit for minor issue)
-- **Duplicate charges**: Same service billed more than once
-- **Unbundling**: Services that should be bundled into one charge billed separately to inflate costs
-- **Balance billing violations**: Out-of-network charges that violate the No Surprises Act
-- **Markup abuse**: Supply/medication charges dramatically above Medicare or Average Wholesale Price
-- **Phantom charges**: Services that appear on the bill but weren't likely provided
-- **Wrong patient/date errors**: Obvious data mismatches
-- **Modifier abuse**: Inappropriate use of billing modifiers
+STEP 2 — EXTRACT ALL METADATA
+Read every visible piece of text. Extract:
+- All names, organizations, addresses, phone numbers, emails
+- All dates (issue date, due dates, effective dates, expiration dates)
+- All monetary amounts with context
+- All reference numbers, account numbers, case numbers, policy numbers
+- All key terms, conditions, obligations, rights
+- Document-specific codes (CPT codes for medical, statute numbers for legal, etc.)
 
-For each identified issue, cite the relevant regulation:
-- No Surprises Act (various sections)
-- CMS Correct Coding Initiative (NCCI)
-- Hospital Price Transparency Rule (45 CFR 180)
-- False Claims Act (31 USC §3729)
-- State balance billing protections
-- Medicare fee schedules as reference
+STEP 3 — PROVIDE INTELLIGENT ANALYSIS
+Based on document type:
+
+FOR MEDICAL BILLS: Check for upcoding, duplicate charges, unbundling, balance billing violations, markup abuse vs Medicare rates. Cite No Surprises Act, NCCI, Hospital Price Transparency Rule.
+
+FOR LEGAL DOCUMENTS: Identify key obligations, deadlines, penalty clauses, unusual terms, potential risks, rights granted/waived. Flag any one-sided clauses, hidden fees, or concerning language.
+
+FOR INSURANCE EOBs: Compare allowed amounts vs billed, identify denied claims, check for coordination of benefits issues, verify patient responsibility calculations.
+
+FOR TAX DOCUMENTS: Verify calculations, identify deduction opportunities, flag potential audit triggers, check for missing information.
+
+FOR FINANCIAL STATEMENTS: Identify trends, anomalies, fees, interest rates, balance changes, unauthorized transactions.
+
+FOR ALL DOCUMENTS: Flag anything that requires urgent action, has a deadline, represents a financial risk, or contains unusual/concerning language.
 
 RESPOND IN THIS EXACT JSON FORMAT (no markdown, no backticks, just raw JSON):
 {
-  "provider": "Name of hospital/provider if visible",
-  "dateOfService": "Date if visible or 'Not visible'",
-  "billType": "Type of medical service",
-  "lineItems": [
+  "category": "one of the category codes above",
+  "subcategory": "more specific type (e.g., 'Emergency Room Bill', 'Commercial Lease', 'Form W-2')",
+  "title": "A clear, descriptive title for this document",
+  "summary": "2-3 sentence plain-English summary of what this document is and what it means for the person",
+  "detailedAnalysis": "A thorough 3-5 paragraph analysis covering all important aspects of this document. Write this as expert advice — what would a lawyer, accountant, or medical billing advocate tell this person? Be specific and actionable.",
+  "entities": [
+    {"label": "Entity type (e.g., 'Provider', 'Patient', 'Landlord')", "value": "The actual value", "confidence": "high|medium|low"}
+  ],
+  "metaTags": [
+    {"key": "tag name", "value": "tag value", "category": "grouping category"}
+  ],
+  "dates": [
+    {"label": "What this date represents", "date": "The date as written"}
+  ],
+  "amounts": [
+    {"label": "What this amount represents", "amount": 0.00, "currency": "USD"}
+  ],
+  "parties": [
+    {"role": "Their role (Provider, Patient, Plaintiff, Landlord, etc.)", "name": "Full name", "details": "Address, contact info, or other identifying details"}
+  ],
+  "keyFindings": [
+    "Finding 1: Clear, specific statement about something important in this document",
+    "Finding 2: Another important observation"
+  ],
+  "riskFlags": [
     {
-      "code": "CPT/HCPCS/REV code",
-      "description": "Service description",
-      "billedAmount": 0.00,
-      "status": "ok | overcharge | duplicate | unbundled | suspicious",
-      "issue": "Description of the issue if not ok, null if ok",
-      "fairPrice": 0.00,
-      "savings": 0.00,
-      "severity": "high | medium | low",
-      "regulation": "Relevant regulation citation"
+      "issue": "Brief description of the risk or concern",
+      "severity": "critical|warning|info",
+      "explanation": "Detailed explanation of why this matters and what to do about it",
+      "regulation": "Relevant law, regulation, or standard (if applicable)"
     }
   ],
-  "totalBilled": 0.00,
-  "totalFairPrice": 0.00,
-  "totalSavings": 0.00,
-  "summary": "2-3 sentence plain-English summary of findings",
-  "overchargeCount": 0,
-  "confidence": "high | medium | low"
+  "actionItems": [
+    {
+      "action": "What the person should do",
+      "deadline": "Date if applicable, null if no deadline",
+      "priority": "high|medium|low"
+    }
+  ],
+  "legalReferences": [
+    "Any laws, regulations, statutes, or legal standards relevant to this document"
+  ],
+  "confidence": "high|medium|low"
 }
 
-If you cannot read the bill clearly, still provide your best analysis with confidence: "low".
-If the image is not a medical bill, return: {"error": "This does not appear to be a medical bill. Please upload a photo of your medical bill or Explanation of Benefits (EOB)."}
+SPECIAL INSTRUCTIONS FOR MEDICAL BILLS:
+If this is a medical bill, ALSO include a "medicalBillData" field with lineItems array containing code, description, billedAmount, status (ok|overcharge|duplicate|unbundled|suspicious), issue, fairPrice, savings, severity, regulation. Plus totalBilled, totalFairPrice, totalSavings.
 
-Be aggressive about finding issues — err on the side of flagging potential problems for the consumer to investigate.`
+BE THOROUGH. Extract EVERY piece of information visible in the document. Miss nothing. Flag everything that could affect the person financially, legally, or medically. If the image is unclear, note that with lower confidence but still extract what you can.
+
+If the image is NOT a document (it's a photo of something else entirely), return:
+{"error": "This does not appear to be a document. Please upload a photo of a bill, contract, legal document, tax form, or other paperwork."}`
 
 export async function POST(request: NextRequest) {
   try {
@@ -70,12 +110,15 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) {
-      return NextResponse.json({ error: 'Analysis service not configured' }, { status: 500 })
+      return NextResponse.json(
+        { error: 'Analysis service not configured' },
+        { status: 500 }
+      )
     }
 
-    // Call Gemini Vision API
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`
     const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      url,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -89,16 +132,14 @@ export async function POST(request: NextRequest) {
                     data: image,
                   },
                 },
-                {
-                  text: ANALYSIS_PROMPT,
-                },
+                { text: UNIVERSAL_ANALYSIS_PROMPT },
               ],
             },
           ],
           generationConfig: {
             temperature: 0.1,
             topP: 0.8,
-            maxOutputTokens: 4096,
+            maxOutputTokens: 8192,
           },
         }),
       }
@@ -114,12 +155,9 @@ export async function POST(request: NextRequest) {
     }
 
     const geminiData = await geminiResponse.json()
-
-    // Extract text from Gemini response
     const rawText =
       geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || ''
 
-    // Parse JSON from response (strip any markdown fences if present)
     const cleaned = rawText
       .replace(/```json\s*/g, '')
       .replace(/```\s*/g, '')
@@ -131,40 +169,48 @@ export async function POST(request: NextRequest) {
     } catch {
       console.error('Failed to parse Gemini response:', rawText.slice(0, 500))
       return NextResponse.json(
-        {
-          error:
-            'Could not parse the bill clearly. Please try with a clearer photo.',
-        },
+        { error: 'Could not analyze this document clearly. Please try with a clearer photo or scan.' },
         { status: 422 }
       )
     }
 
-    // Check for Gemini-side error
     if (analysis.error) {
       return NextResponse.json({ error: analysis.error }, { status: 422 })
     }
 
-    // Ensure all expected fields exist
+    // Normalize with safe defaults
     const result = {
-      provider: analysis.provider || 'Unknown Provider',
-      dateOfService: analysis.dateOfService || 'Not visible',
-      billType: analysis.billType || 'Medical Bill',
-      lineItems: (analysis.lineItems || []).map((item: Record<string, unknown>) => ({
-        code: item.code || 'N/A',
-        description: item.description || '',
-        billedAmount: Number(item.billedAmount) || 0,
-        status: item.status || 'ok',
-        issue: item.issue || null,
-        fairPrice: Number(item.fairPrice) || 0,
-        savings: Number(item.savings) || 0,
-        severity: item.severity || 'low',
-        regulation: item.regulation || '',
-      })),
-      totalBilled: Number(analysis.totalBilled) || 0,
-      totalFairPrice: Number(analysis.totalFairPrice) || 0,
-      totalSavings: Number(analysis.totalSavings) || 0,
+      category: analysis.category || 'other',
+      subcategory: analysis.subcategory || 'Unknown',
+      title: analysis.title || 'Untitled Document',
       summary: analysis.summary || '',
-      overchargeCount: Number(analysis.overchargeCount) || 0,
+      detailedAnalysis: analysis.detailedAnalysis || '',
+      entities: (analysis.entities || []).map((e: Record<string, unknown>) => ({
+        label: e.label || '', value: e.value || '', confidence: e.confidence || 'medium',
+      })),
+      metaTags: (analysis.metaTags || []).map((t: Record<string, unknown>) => ({
+        key: t.key || '', value: t.value || '', category: t.category || 'general',
+      })),
+      dates: (analysis.dates || []).map((d: Record<string, unknown>) => ({
+        label: d.label || '', date: d.date || '',
+      })),
+      amounts: (analysis.amounts || []).map((a: Record<string, unknown>) => ({
+        label: a.label || '', amount: Number(a.amount) || 0, currency: a.currency || 'USD',
+      })),
+      parties: (analysis.parties || []).map((p: Record<string, unknown>) => ({
+        role: p.role || '', name: p.name || '', details: p.details || '',
+      })),
+      keyFindings: analysis.keyFindings || [],
+      riskFlags: (analysis.riskFlags || []).map((r: Record<string, unknown>) => ({
+        issue: r.issue || '', severity: r.severity || 'info',
+        explanation: r.explanation || '', regulation: r.regulation || '',
+      })),
+      actionItems: (analysis.actionItems || []).map((a: Record<string, unknown>) => ({
+        action: a.action || '', deadline: a.deadline || null,
+        priority: a.priority || 'medium', status: 'pending',
+      })),
+      legalReferences: analysis.legalReferences || [],
+      medicalBillData: analysis.medicalBillData || undefined,
       confidence: analysis.confidence || 'medium',
     }
 
